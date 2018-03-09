@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from lib.math_lib import procrustes, logistic, normalize
-from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, gpopt, gpopt2, getConvergence
+from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, getConvergence
 from lib.image import getImageData
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
@@ -73,6 +73,8 @@ class clmFaceTracker:
             # x/yEigenvectors of shape (numPatches, numParameters) (71, 20)
             self.config.xEigenVectors.append(self.config.eigenVectors[i*2])
             self.config.yEigenVectors.append(self.config.eigenVectors[i*2+1])
+        self.config.xEigenVectors = np.array(self.config.xEigenVectors)
+        self.config.yEigenVectors = np.array(self.config.yEigenVectors)
         self.config.eigenValues = self.model.shapeModel.eigenValues
         self.config.meanShape = np.array(self.model.shapeModel.meanShape)
         self.config.meanXShape = []
@@ -221,19 +223,21 @@ class clmFaceTracker:
                 for i in range(len(self.config.varianceSeq)):
                     start = time.time()
                     iteration_minor += 1
-                    jac = createJacobian(self.currentParameters, self.config.meanShape, self.config.eigenVectors)
+                    # jac = createJacobian(self.currentParameters, self.config.meanShape, self.config.eigenVectors)
+                    jac = createJacobian2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+                                          self.config.xEigenVectors, self.config.yEigenVectors)
                     print 'jacobian creation takes {} ms'.format((time.time()-start)*1e3)
                     start = time.time()
 
-                    meanshiftVectors = []
+                    meanShiftVector = np.zeros((self.config.numPatches*2, 1))
                     for j in range(self.config.numPatches):
                         opj0 = originalPositions[j][0] - ((self.config.searchWindow-1)*scaling/2)
                         opj1 = originalPositions[j][1] - ((self.config.searchWindow-1)*scaling/2)
                         vpsum = gpopt(self.config.searchWindow, self.currentPositions[j], self.updatePosition, self.vecProbs,
                                      responses, opj0, opj1, j, self.config.varianceSeq[i], scaling)
                         gpopt2(self.config.searchWindow, self.vecpos, self.updatePosition, self.vecProbs, vpsum, opj0, opj1, scaling);
-                        meanshiftVectors.append([self.vecpos[0] - self.currentPositions[j][0],
-                                                 self.vecpos[1] - self.currentPositions[j][1]])
+                        meanShiftVector[j] = self.vecpos[0] - self.currentPositions[j][0]
+                        meanShiftVector[j+self.config.numPatches] = self.vecpos[1] - self.currentPositions[j][1]
                     print 'calculating meanshift takes {} ms'.format((time.time() - start)*1e3)
                     start = time.time()
 
@@ -241,21 +245,14 @@ class clmFaceTracker:
                         dst = gray.copy()
                         for j in range(self.config.numPatches):
                             x, y = self.currentPositions[j]
-                            x_new = x + meanshiftVectors[j][0]
-                            y_new = y + meanshiftVectors[j][1]
+                            x_new = x + meanShiftVector[j][0]
+                            y_new = y + meanShiftVector[j+self.config.numPatches][0]
                             cv2.circle(dst, (int(x_new), int(y_new)), 5, (0, 255, 0))
                             cv2.circle(dst, (int(x), int(y)), 5, (255, 0, 0))
                             cv2.line(dst, (int(x),int(y)), (int(x_new), int(y_new)), (255, 255, 255), 2)
                         plt.imshow(dst, cmap='gray')
                         plt.title('meanshift iteration {}.{}'.format(iteration, iteration_minor))
                         plt.show()
-
-                    meanShiftVector = np.zeros((self.config.numPatches*2, 1))
-                    for k in range(self.config.numPatches):
-                        meanShiftVector[k*2][0] = meanshiftVectors[k][0]
-                        meanShiftVector[k*2+1][0] = meanshiftVectors[k][1]
-                    print 'reshaping meanshift takes {} ms'.format((time.time() - start)*1e3)
-                    start = time.time()
 
                     # compute pdm paramter update
                     prior = np.dot(self.gaussianPD, self.config.varianceSeq[i])

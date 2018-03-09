@@ -87,64 +87,45 @@ def createJacobian(parameters, meanShape, eigenVectors):
         for p in range(numParameters):
             j0+=parameters[p+4]*eigenVectors[i*2][p]
             j1+=parameters[p+4]*eigenVectors[i*2+1][p]
-        jacobian[i*2][0] = j0
-        jacobian[i*2+1][0] = j1
+        jacobian[i][0] = j0
+        jacobian[i+numPatches][0] = j1
         # 2
         j0 = meanShape[i][1]
         j1 = meanShape[i][0]
         for p in range(numParameters):
             j0 += parameters[p+4]*eigenVectors[i*2+1][p];
             j1 += parameters[p+4]*eigenVectors[i*2][p];
-        jacobian[i*2][1] = -j0;
-        jacobian[(i*2)+1][1] = j1;
+        jacobian[i][1] = -j0;
+        jacobian[i+numPatches][1] = j1;
         # 3
-        jacobian[i*2][2] = 1;
-        jacobian[(i*2)+1][2] = 0;
+        jacobian[i][2] = 1;
+        jacobian[i+numPatches][2] = 0;
         # 4
-        jacobian[i*2][3] = 0;
-        jacobian[(i*2)+1][3] = 1;
+        jacobian[i][3] = 0;
+        jacobian[i+numPatches][3] = 1;
         # the rest
         for j in range(numParameters):
             j0 = parameters[0]*eigenVectors[i*2][j] - parameters[1]*eigenVectors[(i*2)+1][j] + eigenVectors[i*2][j];
             j1 = parameters[0]*eigenVectors[(i*2)+1][j] + parameters[1]*eigenVectors[i*2][j] + eigenVectors[(i*2)+1][j];
-            jacobian[i*2][j+4] = j0;
-            jacobian[(i*2)+1][j+4] = j1;
+            jacobian[i][j+4] = j0;
+            jacobian[i+numPatches][j+4] = j1;
     return jacobian
 
 # faster version of createJacobian
-def createJacobian2(parameters, meanShape, eigenVectors):
+def createJacobian2(parameters, meanXShape, meanYShape, xEigenVectors, yEigenVectors):
     numParameters = len(parameters)-4
-    numPatches = len(meanShape)
+    numPatches = len(meanXShape)
     jacobian = np.zeros((2*numPatches, numParameters+4))
-    for i in range(numPatches):
-        # 1
-        j0 = meanShape[i][0]
-        j1 = meanShape[i][1]
-        for p in range(numParameters):
-            j0+=parameters[p+4]*eigenVectors[i*2][p]
-            j1+=parameters[p+4]*eigenVectors[i*2+1][p]
-        jacobian[i*2][0] = j0
-        jacobian[i*2+1][0] = j1
-        # 2
-        j0 = meanShape[i][1]
-        j1 = meanShape[i][0]
-        for p in range(numParameters):
-            j0 += parameters[p+4]*eigenVectors[i*2+1][p];
-            j1 += parameters[p+4]*eigenVectors[i*2][p];
-        jacobian[i*2][1] = -j0;
-        jacobian[(i*2)+1][1] = j1;
-        # 3
-        jacobian[i*2][2] = 1;
-        jacobian[(i*2)+1][2] = 0;
-        # 4
-        jacobian[i*2][3] = 0;
-        jacobian[(i*2)+1][3] = 1;
-        # the rest
-        for j in range(numParameters):
-            j0 = parameters[0]*eigenVectors[i*2][j] - parameters[1]*eigenVectors[(i*2)+1][j] + eigenVectors[i*2][j];
-            j1 = parameters[0]*eigenVectors[(i*2)+1][j] + parameters[1]*eigenVectors[i*2][j] + eigenVectors[(i*2)+1][j];
-            jacobian[i*2][j+4] = j0;
-            jacobian[(i*2)+1][j+4] = j1;
+    j0 = meanXShape + np.dot(xEigenVectors, parameters[4:]).reshape(numPatches, 1)
+    j1 = meanYShape + np.dot(yEigenVectors, parameters[4:]).reshape(numPatches, 1)
+    jacobian[0:numPatches, 0:1] = j0
+    jacobian[numPatches:numPatches*2, 0:1] = j1
+    jacobian[0:numPatches, 1:2] = -j1
+    jacobian[numPatches:numPatches*2, 1:2] = j0
+    jacobian[0:numPatches, 2:3] = np.ones((numPatches, 1))
+    jacobian[numPatches:numPatches*2, 3:4] = np.ones((numPatches, 1))
+    jacobian[0:numPatches, 4:] = xEigenVectors * (parameters[0]+1) - yEigenVectors * parameters[1]
+    jacobian[numPatches:numPatches*2, 4:] = xEigenVectors * parameters[1] + yEigenVectors * (parameters[0]+1)
     return jacobian
 
 def gpopt(responseWidth, currentPositionsj, updatePosition, vecProbs,
