@@ -62,7 +62,57 @@ def calculatePositions(parameters, meanShape, eigenVectors, useTransforms):
         positions.append([x,y])
     return positions
 
+# faster version of calculatePositions
+def calculatePositions2(parameters, meanXShape, meanYShape, xEigenVectors, yEigenVectors, useTransforms):
+    numPatches = len(meanXShape)
+    x = meanXShape + np.dot(xEigenVectors, parameters[4:]).reshape(numPatches, 1)
+    y = meanYShape + np.dot(yEigenVectors, parameters[4:]).reshape(numPatches, 1)
+    xy = np.hstack((x, y))
+    if useTransforms:
+        homogeneous = np.ones((numPatches, 1))
+        xy1 = np.hstack((xy, homogeneous))
+        xy = np.dot(xy1, [[parameters[0]+1, parameters[1]],
+                          [-parameters[1],   parameters[0]+1],
+                          [parameters[2],   parameters[3]]])
+    return xy
+
 def createJacobian(parameters, meanShape, eigenVectors):
+    numParameters = len(parameters)-4
+    numPatches = len(meanShape)
+    jacobian = np.zeros((2*numPatches, numParameters+4))
+    for i in range(numPatches):
+        # 1
+        j0 = meanShape[i][0]
+        j1 = meanShape[i][1]
+        for p in range(numParameters):
+            j0+=parameters[p+4]*eigenVectors[i*2][p]
+            j1+=parameters[p+4]*eigenVectors[i*2+1][p]
+        jacobian[i*2][0] = j0
+        jacobian[i*2+1][0] = j1
+        # 2
+        j0 = meanShape[i][1]
+        j1 = meanShape[i][0]
+        for p in range(numParameters):
+            j0 += parameters[p+4]*eigenVectors[i*2+1][p];
+            j1 += parameters[p+4]*eigenVectors[i*2][p];
+        jacobian[i*2][1] = -j0;
+        jacobian[(i*2)+1][1] = j1;
+        # 3
+        jacobian[i*2][2] = 1;
+        jacobian[(i*2)+1][2] = 0;
+        # 4
+        jacobian[i*2][3] = 0;
+        jacobian[(i*2)+1][3] = 1;
+        # the rest
+        for j in range(numParameters):
+            j0 = parameters[0]*eigenVectors[i*2][j] - parameters[1]*eigenVectors[(i*2)+1][j] + eigenVectors[i*2][j];
+            j1 = parameters[0]*eigenVectors[(i*2)+1][j] + parameters[1]*eigenVectors[i*2][j] + eigenVectors[(i*2)+1][j];
+            jacobian[i*2][j+4] = j0;
+            jacobian[(i*2)+1][j+4] = j1;
+    return jacobian
+
+# faster version of createJacobian
+def createJacobian2(parameters, meanShape, eigenVectors):
     numParameters = len(parameters)-4
     numPatches = len(meanShape)
     jacobian = np.zeros((2*numPatches, numParameters+4))

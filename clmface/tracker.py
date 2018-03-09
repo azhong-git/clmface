@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from lib.math_lib import procrustes, logistic, normalize
-from lib.tracking import getInitialPosition, calculatePositions, createJacobian, gpopt, gpopt2, getConvergence
+from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, gpopt, gpopt2, getConvergence
 from lib.image import getImageData
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
@@ -64,9 +64,24 @@ class clmFaceTracker:
         self.config.sketchW = self.config.modelWidth + self.config.searchWindow-1 + self.config.patchSize-1
         self.config.sketchH = self.config.modelHeight + self.config.searchWindow-1 + self.config.patchSize-1
 
+        # eigenVectors of shape (numPatches*2, numParameters) (71*2, 20)
         self.config.eigenVectors = self.model.shapeModel.eigenVectors
+        self.config.xEigenVectors = []
+        self.config.yEigenVectors = []
+        # compute x and y eigenVectors
+        for i in range(self.config.numPatches):
+            # x/yEigenvectors of shape (numPatches, numParameters) (71, 20)
+            self.config.xEigenVectors.append(self.config.eigenVectors[i*2])
+            self.config.yEigenVectors.append(self.config.eigenVectors[i*2+1])
         self.config.eigenValues = self.model.shapeModel.eigenValues
         self.config.meanShape = np.array(self.model.shapeModel.meanShape)
+        self.config.meanXShape = []
+        self.config.meanYShape = []
+        for i in range(self.config.numPatches):
+            self.config.meanXShape.append([self.config.meanShape[i][0]])
+            self.config.meanYShape.append([self.config.meanShape[i][1]])
+        self.config.meanXShape = np.array(self.config.meanXShape)
+        self.config.meanYShape = np.array(self.config.meanYShape)
         self.config.msmodelwidth = max(self.config.meanShape.T[0]) - min(self.config.meanShape.T[0])
         self.config.msmodelheight = max(self.config.meanShape.T[1]) - min(self.config.meanShape.T[1])
 
@@ -110,8 +125,9 @@ class clmFaceTracker:
             self.currentParameters[1] = scaling*math.sin(rotation)
             self.currentParameters[2] = translateX
             self.currentParameters[3] = translateY
-            self.currentPositions = calculatePositions(self.currentParameters,
-                                                       self.config.meanShape, self.config.eigenVectors, True)
+
+            self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+                                                        self.config.xEigenVectors, self.config.yEigenVectors, True)
             print 'initial detection takes {} ms'.format((time.time() - start)*1e3)
             if self.debug:
                 logging.debug( 'currentParameters init: {}'.format(self.currentParameters))
@@ -146,8 +162,8 @@ class clmFaceTracker:
             current_gray = cv2.resize(current_gray, None, 0, 1/scaling, 1/scaling, interpolation=cv2.INTER_NEAREST)
             current_gray = current_gray[0:self.config.sketchH, 0:self.config.sketchW]
             print 'rotation/scale/translation takes {} ms'.format((time.time() - start)*1e3)
-
-            patchPositions = calculatePositions(self.currentParameters, self.config.meanShape, self.config.eigenVectors, False)
+            patchPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+                                                 self.config.xEigenVectors, self.config.yEigenVectors, False)
 
             if self.debug >= 4 :
                 logging.debug('currentParameters are {}'.format(self.currentParameters))
@@ -206,6 +222,9 @@ class clmFaceTracker:
                     start = time.time()
                     iteration_minor += 1
                     jac = createJacobian(self.currentParameters, self.config.meanShape, self.config.eigenVectors)
+                    print 'jacobian creation takes {} ms'.format((time.time()-start)*1e3)
+                    start = time.time()
+
                     meanshiftVectors = []
                     for j in range(self.config.numPatches):
                         opj0 = originalPositions[j][0] - ((self.config.searchWindow-1)*scaling/2)
@@ -215,6 +234,8 @@ class clmFaceTracker:
                         gpopt2(self.config.searchWindow, self.vecpos, self.updatePosition, self.vecProbs, vpsum, opj0, opj1, scaling);
                         meanshiftVectors.append([self.vecpos[0] - self.currentPositions[j][0],
                                                  self.vecpos[1] - self.currentPositions[j][1]])
+                    print 'calculating meanshift takes {} ms'.format((time.time() - start)*1e3)
+                    start = time.time()
 
                     if self.debug:
                         dst = gray.copy()
@@ -228,10 +249,13 @@ class clmFaceTracker:
                         plt.imshow(dst, cmap='gray')
                         plt.title('meanshift iteration {}.{}'.format(iteration, iteration_minor))
                         plt.show()
+
                     meanShiftVector = np.zeros((self.config.numPatches*2, 1))
                     for k in range(self.config.numPatches):
                         meanShiftVector[k*2][0] = meanshiftVectors[k][0]
                         meanShiftVector[k*2+1][0] = meanshiftVectors[k][1]
+                    print 'reshaping meanshift takes {} ms'.format((time.time() - start)*1e3)
+                    start = time.time()
 
                     # compute pdm paramter update
                     prior = np.dot(self.gaussianPD, self.config.varianceSeq[i])
@@ -245,9 +269,11 @@ class clmFaceTracker:
                     paramUpdateRight = np.subtract(priorP, jtv)
                     paramUpdate = np.dot(np.linalg.inv(paramUpdateLeft), paramUpdateRight)
                     oldPositions = deepcopy(self.currentPositions)
+                    print 'pdm parameter update takes {} ms'.format((time.time() - start)*1e3)
+                    start = time.time()
+
                     # update estimated parameters
-                    for k in range(self.config.numParameters+4):
-                        self.currentParameters[k]-=paramUpdate[k]
+                    self.currentParameters -= paramUpdate.reshape(self.config.numParameters+4)
                     # clipping of parameters if they are too high
                     for k in range(self.config.numParameters):
                         clip = math.fabs(3*math.sqrt(self.config.eigenValues[k]))
@@ -256,10 +282,11 @@ class clmFaceTracker:
                                 self.currentParameters[k+4]=clip
                             else:
                                 self.currentParameters[k+4]=-clip
-
-                    self.currentPositions = calculatePositions(self.currentParameters, self.config.meanShape,
-                                                               self.config.eigenVectors, True)
-                    print 'doing optimization for iteration {}.{} takes {} ms'.format(iteration, iteration_minor,
+                    print 'updating currentParameters takes {} ms'.format((time.time()-start)*1e3)
+                    start = time.time()
+                    self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+                                                            self.config.xEigenVectors, self.config.yEigenVectors, True)
+                    print 'updating positions for iteration {}.{} takes {} ms'.format(iteration, iteration_minor,
                                                                                       (time.time() - start)*1e3)
 
                     if self.debug >= 2:
@@ -295,8 +322,8 @@ def main():
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (625, 500))
     gray=img[:,:,0]*0.3+img[:,:,1]*0.59+img[:,:,2]*0.11
-    plt.imshow(gray, cmap='gray')
-    plt.show()
+    # plt.imshow(gray, cmap='gray')
+    # plt.show()
     tracker.track(gray)
 
     #    tracker.track
