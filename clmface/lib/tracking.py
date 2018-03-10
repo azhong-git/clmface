@@ -4,6 +4,10 @@ import numpy as np
 import math
 from math_lib import procrustes
 
+# np.round is different than IEEE round
+# instead of using np.round, vectorize round below
+np_round = np.vectorize(round)
+
 def getInitialPosition(img, model, harrModelDir, debug=False):
     # first get an initial guess of where the face is
     face_cascade = cv2.CascadeClassifier(os.path.join(harrModelDir, 'frontal_face.xml'))
@@ -75,9 +79,15 @@ def calculatePositions2(parameters, meanXShape, meanYShape, xEigenVectors, yEige
         XY = np.dot(xy1, [[parameters[0]+1, parameters[1]],
                           [-parameters[1],   parameters[0]+1],
                           [parameters[2],   parameters[3]]])
-        return xy, XY
+        return np_round(xy).astype(np.int), XY
     else:
-        return xy, None
+        return np_round(xy).astype(np.int), None
+
+def convertPatchVectorToPositionVector(parameters, patch):
+    x, y = patch
+    x = (parameters[0]+1)*x - parameters[1]*y
+    y = (parameters[0]+1)*y + parameters[1]*x
+    return (x, y)
 
 # depreciated, use createJacobian2
 def createJacobian(parameters, meanShape, eigenVectors):
@@ -132,33 +142,33 @@ def createJacobian2(parameters, meanXShape, meanYShape, xEigenVectors, yEigenVec
     jacobian[numPatches:numPatches*2, 4:] = xEigenVectors * parameters[1] + yEigenVectors * (parameters[0]+1)
     return jacobian
 
-def gpopt(responseWidth, currentPositionsj, updatePosition, vecProbs,
+def gpopt(responseWidth, currentPositionsj, vecProbs,
           responses, opj0, opj1, j, variance, scaling):
     pos_idx = 0;
     vpsum = 0;
     for k in range(responseWidth):
-        updatePosition[1] = opj1+(k*scaling);
+        updatePositionY = opj1+(k*scaling);
         for l in range(responseWidth):
-            updatePosition[0] = opj0+(l*scaling);
-            dx = currentPositionsj[0] - updatePosition[0];
-            dy = currentPositionsj[1] - updatePosition[1];
+            updatePositionX = opj0+(l*scaling);
+            dx = currentPositionsj[0] - updatePositionX
+            dy = currentPositionsj[1] - updatePositionY;
             vecProbs[pos_idx] = responses[j][pos_idx] * math.exp(-0.5*((dx*dx)+(dy*dy))/(variance*scaling));
             vpsum += vecProbs[pos_idx];
             pos_idx+=1;
     return vpsum;
 
-def gpopt2(responseWidth, vecpos, updatePosition, vecProbs, vpsum, opj0, opj1, scaling):
+def gpopt2(responseWidth, vecpos, vecProbs, vpsum, opj0, opj1, scaling):
     pos_idx = 0;
     vecsum = 0;
     vecpos[0] = 0;
     vecpos[1] = 0;
     for k in range(responseWidth):
-        updatePosition[1] = opj1+(k*scaling);
+        updatePositionY = opj1+(k*scaling);
         for l in range(responseWidth):
-            updatePosition[0] = opj0+(l*scaling);
+            updatePositionX = opj0+(l*scaling);
             vecsum = vecProbs[pos_idx]/vpsum;
-            vecpos[0] += vecsum*updatePosition[0];
-            vecpos[1] += vecsum*updatePosition[1];
+            vecpos[0] += vecsum*updatePositionX;
+            vecpos[1] += vecsum*updatePositionY;
             pos_idx+=1;
 
 def getConvergence(previousPositions):

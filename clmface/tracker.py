@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from lib.math_lib import procrustes, logistic, normalize
-from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, getConvergence
+from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, getConvergence, convertPatchVectorToPositionVector
 from lib.image import getImageData
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
@@ -93,7 +93,6 @@ class clmFaceTracker:
         self.config.logistic_func = np.vectorize(logistic_func)
 
     def _initial_state(self):
-        self.updatePosition = [0.0, 0.0]
         self.vecpos = [0.0, 0.0]
         self.vecProbs = np.zeros(self.config.searchWindow * self.config.searchWindow)
         self.gaussianPD = np.zeros((self.config.numParameters+4, self.config.numParameters+4))
@@ -176,7 +175,7 @@ class clmFaceTracker:
                 plt.show()
                 current_gray_dst = current_gray.copy()
                 for x, y in self.patchPositions:
-                    cv2.circle(current_gray_dst, (int(x), int(y)), 2, (255))
+                    cv2.circle(current_gray_dst, (x, y), 2, (255))
                 plt.imshow(current_gray_dst, cmap='gray')
                 plt.title('fine-grained face landmarks on the small image')
                 plt.show()
@@ -189,11 +188,8 @@ class clmFaceTracker:
                 patches = []
                 responses = []
                 for i in range(self.config.numPatches):
-                    start_x = int(round(self.patchPositions[i][0]-pw/2.0))
-                    start_y = int(round(self.patchPositions[i][1]-pl/2.0))
-                    mid_x = start_x + pw/2
-                    mid_y = start_y + pw/2
-                    patch = getImageData(current_gray, mid_x, mid_y, pw, pl)
+                    patch = getImageData(current_gray, self.patchPositions[i][0], self.patchPositions[i][1],
+                                         pw, pl)
                     # normalize (alternative way, way faster than math_lib.normalize)
                     maxv, minv = np.max(patch), np.min(patch)
                     patch = (patch - minv) / 1.0 / (maxv - minv)
@@ -225,7 +221,6 @@ class clmFaceTracker:
                 for i in range(len(self.config.varianceSeq)):
                     start = time.time()
                     iteration_minor += 1
-                    # jac = createJacobian(self.currentParameters, self.config.meanShape, self.config.eigenVectors)
                     jac = createJacobian2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
                                           self.config.xEigenVectors, self.config.yEigenVectors)
                     print 'jacobian creation takes {} ms'.format((time.time()-start)*1e3)
@@ -235,11 +230,25 @@ class clmFaceTracker:
                     for j in range(self.config.numPatches):
                         opj0 = originalPositions[j][0] - ((self.config.searchWindow-1)*scaling/2)
                         opj1 = originalPositions[j][1] - ((self.config.searchWindow-1)*scaling/2)
-                        vpsum = gpopt(self.config.searchWindow, self.currentPositions[j], self.updatePosition, self.vecProbs,
+                        vpsum = gpopt(self.config.searchWindow, self.currentPositions[j], self.vecProbs,
                                      responses, opj0, opj1, j, self.config.varianceSeq[i], scaling)
-                        gpopt2(self.config.searchWindow, self.vecpos, self.updatePosition, self.vecProbs, vpsum, opj0, opj1, scaling);
+                        gpopt2(self.config.searchWindow, self.vecpos, self.vecProbs, vpsum, opj0, opj1, scaling)
                         meanShiftVector[j] = self.vecpos[0] - self.currentPositions[j][0]
                         meanShiftVector[j+self.config.numPatches] = self.vecpos[1] - self.currentPositions[j][1]
+                    # for j in range(self.config.numPatches):
+                    #     x = int(round(self.patchPositions[j][0]))
+                    #     y = int(round(self.patchPositions[j][1]))
+                    #     opj0 = x - (self.config.searchWindow-1)/2
+                    #     opj1 = y - (self.config.searchWindow-1)/2
+                    #     vpsum = gpopt(self.config.searchWindow, (x,y), self.vecProbs,
+                    #                   responses, opj0, opj1, j, self.config.varianceSeq[i], 1.0)
+                    #     gpopt2(self.config.searchWindow, self.vecpos, self.vecProbs, vpsum, opj0, opj1, 1.0)
+                    #     x = self.vecpos[0] - x
+                    #     y = self.vecpos[1] - y
+                    #     x, y = convertPatchVectorToPositionVector(self.currentParameters, (x, y))
+                    #     meanShiftVector[j] = x
+                    #     meanShiftVector[j+self.config.numPatches] = y
+
                     print 'calculating meanshift takes {} ms'.format((time.time() - start)*1e3)
                     start = time.time()
 
@@ -249,8 +258,8 @@ class clmFaceTracker:
                             x, y = self.currentPositions[j]
                             x_new = x + meanShiftVector[j][0]
                             y_new = y + meanShiftVector[j+self.config.numPatches][0]
-                            cv2.circle(dst, (int(x_new), int(y_new)), 5, (0, 255, 0))
-                            cv2.circle(dst, (int(x), int(y)), 5, (255, 0, 0))
+                            cv2.circle(dst, (int(x_new), int(y_new)), 2, (0, 255, 0))
+                            cv2.circle(dst, (int(x), int(y)), 2, (255, 0, 0))
                             cv2.line(dst, (int(x),int(y)), (int(x_new), int(y_new)), (255, 255, 255), 2)
                         plt.imshow(dst, cmap='gray')
                         plt.title('meanshift iteration {}.{}'.format(iteration, iteration_minor))
@@ -300,13 +309,15 @@ class clmFaceTracker:
                         pnsq_x = self.currentPositions[k][0] - oldPositions[k][0]
                         pnsq_y = self.currentPositions[k][1] - oldPositions[k][1]
                         positionNorm += pnsq_x * pnsq_x + pnsq_y * pnsq_y
+                    logging.info('iteration {}.{}: position norm is {}, limit is {}'.format(iteration, iteration_minor, positionNorm, self.config.convergenceLimit))
+
                     if positionNorm < self.config.convergenceLimit:
                         break
 
                 self.previousPositions.append(self.currentPositions)
                 convergenceScore = getConvergence(self.previousPositions)
                 logging.info('iteration {}.{}: convergence score is {}'.format(iteration, iteration_minor, convergenceScore))
-                if convergenceScore < self.config.convergenceLimit:
+                if convergenceScore < self.config.convergenceThreshold:
                     logging.info('CLM tracker converged: score is {} < {}'.format(convergenceScore, self.config.convergenceLimit))
                     break
 
