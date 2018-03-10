@@ -43,6 +43,7 @@ def getInitialPosition(img, model, harrModelDir, debug=False):
                                    [model['hints']['leftEye'], model['hints']['rightEye'], model['hints']['nose']])
     return procrustes_params
 
+# depreciated, use calculatePositions2
 def calculatePositions(parameters, meanShape, eigenVectors, useTransforms):
     numParameters = len(parameters)-4
     numPatches = len(meanShape)
@@ -71,11 +72,14 @@ def calculatePositions2(parameters, meanXShape, meanYShape, xEigenVectors, yEige
     if useTransforms:
         homogeneous = np.ones((numPatches, 1))
         xy1 = np.hstack((xy, homogeneous))
-        xy = np.dot(xy1, [[parameters[0]+1, parameters[1]],
+        XY = np.dot(xy1, [[parameters[0]+1, parameters[1]],
                           [-parameters[1],   parameters[0]+1],
                           [parameters[2],   parameters[3]]])
-    return xy
+        return xy, XY
+    else:
+        return xy, None
 
+# depreciated, use createJacobian2
 def createJacobian(parameters, meanShape, eigenVectors):
     numParameters = len(parameters)-4
     numPatches = len(meanShape)

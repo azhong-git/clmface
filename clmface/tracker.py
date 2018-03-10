@@ -103,7 +103,10 @@ class clmFaceTracker:
             else:
                 self.gaussianPD[i+4][i+4] = 1.0/self.config.eigenValues[i]
         self.currentParameters = np.zeros(self.config.numParameters+4)
+        # in full-size coordinates
         self.currentPositions = None
+        # in scaled-down and rotated coordiantes
+        self.patchPositions = None
 
         # history of states
         self.previousPositions = deque(maxlen=10)
@@ -128,8 +131,9 @@ class clmFaceTracker:
             self.currentParameters[2] = translateX
             self.currentParameters[3] = translateY
 
-            self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
-                                                        self.config.xEigenVectors, self.config.yEigenVectors, True)
+            self.patchPositions, self.currentPositions = calculatePositions2(self.currentParameters,
+                                                                             self.config.meanXShape, self.config.meanYShape,
+                                                                             self.config.xEigenVectors, self.config.yEigenVectors, True)
             print 'initial detection takes {} ms'.format((time.time() - start)*1e3)
             if self.debug:
                 logging.debug( 'currentParameters init: {}'.format(self.currentParameters))
@@ -164,8 +168,6 @@ class clmFaceTracker:
             current_gray = cv2.resize(current_gray, None, 0, 1/scaling, 1/scaling, interpolation=cv2.INTER_NEAREST)
             current_gray = current_gray[0:self.config.sketchH, 0:self.config.sketchW]
             print 'rotation/scale/translation takes {} ms'.format((time.time() - start)*1e3)
-            patchPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
-                                                 self.config.xEigenVectors, self.config.yEigenVectors, False)
 
             if self.debug >= 4 :
                 logging.debug('currentParameters are {}'.format(self.currentParameters))
@@ -173,7 +175,7 @@ class clmFaceTracker:
                 plt.title('scaled and transformed to intial model size')
                 plt.show()
                 current_gray_dst = current_gray.copy()
-                for x, y in patchPositions:
+                for x, y in self.patchPositions:
                     cv2.circle(current_gray_dst, (int(x), int(y)), 2, (255))
                 plt.imshow(current_gray_dst, cmap='gray')
                 plt.title('fine-grained face landmarks on the small image')
@@ -187,8 +189,8 @@ class clmFaceTracker:
                 patches = []
                 responses = []
                 for i in range(self.config.numPatches):
-                    start_x = int(round(patchPositions[i][0]-pw/2.0))
-                    start_y = int(round(patchPositions[i][1]-pl/2.0))
+                    start_x = int(round(self.patchPositions[i][0]-pw/2.0))
+                    start_y = int(round(self.patchPositions[i][1]-pl/2.0))
                     mid_x = start_x + pw/2
                     mid_y = start_y + pw/2
                     patch = getImageData(current_gray, mid_x, mid_y, pw, pl)
@@ -281,8 +283,8 @@ class clmFaceTracker:
                                 self.currentParameters[k+4]=-clip
                     print 'updating currentParameters takes {} ms'.format((time.time()-start)*1e3)
                     start = time.time()
-                    self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
-                                                            self.config.xEigenVectors, self.config.yEigenVectors, True)
+                    self.patchPositions, self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+                                                                                     self.config.xEigenVectors, self.config.yEigenVectors, True)
                     print 'updating positions for iteration {}.{} takes {} ms'.format(iteration, iteration_minor,
                                                                                       (time.time() - start)*1e3)
 
