@@ -131,8 +131,11 @@ class clmFaceTracker:
             start = time.time()
             # useful if the grayscale image contains floating point numbers
             gray_truncated = np.asarray(gray, dtype=np.uint8)
-            (translateX, translateY, scaling, rotation) = getInitialPosition(gray_truncated, self.model,
-                                                                             modelDir, debug=self.debug)
+            self.detected_face, (translateX, translateY, scaling, rotation) = getInitialPosition(
+                gray_truncated, self.model,
+                modelDir, debug=self.debug)
+            if not self.detected_face:
+                return False
             # AZ: tuning why -1?
             self.currentParameters[0] = scaling*math.cos(rotation)-1
             self.currentParameters[1] = scaling*math.sin(rotation)
@@ -151,10 +154,12 @@ class clmFaceTracker:
                 plt.imshow(dst, cmap='gray')
                 plt.title('fine-grained face landmarks based on initial guess')
                 plt.show()
+            self.refine_tracking(gray, tracking=False)
+        else:
+            self.refine_tracking(gray, tracking=True)
+        return True
 
-        self.refine_tracking(gray)
-
-    def refine_tracking(self, gray):
+    def refine_tracking(self, gray, tracking=False):
         iteration = 0
         while True:
             iteration += 1
@@ -167,16 +172,20 @@ class clmFaceTracker:
             scaling = self.currentParameters[1]/math.sin(rotation)
             translateX = self.currentParameters[2]
             translateY = self.currentParameters[3]
-            print 'srxy, {}, {}, {}, {}'.format(scaling, rotation, translateX, translateY)
             rows, cols = gray.shape
             M = cv2.getRotationMatrix2D((translateX, translateY), rotation/math.pi*180, 1)
-            current_gray = cv2.warpAffine(gray, M, (cols*2, rows*2))
-            M = np.float32([[1.0, 0, -translateX],
-                            [0, 1.0, -translateY]])
-            current_gray = cv2.warpAffine(current_gray, M, (cols, rows))
+            M[0, 2] -= translateX
+            M[1, 2] -= translateY
+            current_gray = cv2.warpAffine(gray, M, (cols, rows))
+            # current_gray = cv2.warpAffine(gray, M, (2*cols, 2*rows))
+            print 'rotation/translation takes {} ms'.format((time.time() - start)*1e3)
+            start = time.time()
+            # M = np.float32([[1.0, 0, -translateX],
+            #                 [0, 1.0, -translateY]])
+            # current_gray = cv2.warpAffine(current_gray, M, (cols, rows))
             current_gray = cv2.resize(current_gray, None, 0, 1/scaling, 1/scaling, interpolation=cv2.INTER_NEAREST)
             current_gray = current_gray[0:self.config.sketchH, 0:self.config.sketchW]
-            print 'rotation/scale/translation takes {} ms'.format((time.time() - start)*1e3)
+            print 'scale takes {} ms'.format((time.time() - start)*1e3)
 
             if self.debug >= 4 :
                 logging.debug('currentParameters are {}'.format(self.currentParameters))
@@ -222,6 +231,7 @@ class clmFaceTracker:
                     response = (response - minv) / 1.0 / (maxv - minv)
 
                     response = response.reshape(self.config.searchWindow*self.config.searchWindow)
+
                     responses.append(response.copy())
                 print 'applying filters takes {} ms'.format((time.time() - start)*1e3)
 
@@ -325,6 +335,9 @@ class clmFaceTracker:
                 if convergenceScore < self.config.convergenceThreshold:
                     logging.info('CLM tracker converged: score is {} < {}'.format(convergenceScore, self.config.convergenceLimit))
                     break
+                if tracking and iteration > 50:
+                    logging.info('CLM tracker exceed iteration limit')
+                    break
 
 def main():
     if len(sys.argv) < 2:
@@ -336,7 +349,9 @@ def main():
     img = cv2.imread(imagePath)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (625, 500))
-    gray=img[:,:,0]*0.3+img[:,:,1]*0.59+img[:,:,2]*0.11
+    # gray=img[:,:,0]*0.3+img[:,:,1]*0.59+img[:,:,2]*0.11
+    # the following conversion to integer pixel val makes a lot of arithmetic faster
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     # plt.imshow(gray, cmap='gray')
     # plt.show()
     tracker.track(gray)
