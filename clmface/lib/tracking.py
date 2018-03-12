@@ -83,11 +83,11 @@ def calculatePositions2(parameters, meanXShape, meanYShape, xEigenVectors, yEige
     else:
         return np_round(xy).astype(np.int), None
 
-def convertPatchVectorToPositionVector(parameters, patch):
-    x, y = patch
-    x = (parameters[0]+1)*x - parameters[1]*y
-    y = (parameters[0]+1)*y + parameters[1]*x
-    return (x, y)
+def convertPatchVectorToPositionVector(parameters, dPatch):
+    dx, dy = dPatch
+    dX = (parameters[0]+1)*dx - parameters[1]*dy
+    dY = (parameters[0]+1)*dy + parameters[1]*dx
+    return (dX, dY)
 
 # depreciated, use createJacobian2
 def createJacobian(parameters, meanShape, eigenVectors):
@@ -157,6 +157,22 @@ def gpopt(responseWidth, currentPositionsj, vecProbs,
             pos_idx+=1;
     return vpsum;
 
+# calculate meanshift in patch domain, instead of in raw image domain
+def gpopt_new(responseWidth, currentPositionsj, vecProbs,
+              responses, opj0, opj1, j, variance, scaling):
+    pos_idx = 0;
+    vpsum = 0;
+    for k in range(responseWidth):
+        updatePositionY = opj1+(k);
+        for l in range(responseWidth):
+            updatePositionX = opj0+(l);
+            dx = currentPositionsj[0] - updatePositionX
+            dy = currentPositionsj[1] - updatePositionY;
+            vecProbs[pos_idx] = responses[j][pos_idx] * math.exp(-0.5*((dx*dx)+(dy*dy))*scaling/(variance));
+            vpsum += vecProbs[pos_idx];
+            pos_idx+=1;
+    return vpsum;
+
 def gpopt2(responseWidth, vecpos, vecProbs, vpsum, opj0, opj1, scaling):
     pos_idx = 0;
     vecsum = 0;
@@ -170,6 +186,22 @@ def gpopt2(responseWidth, vecpos, vecProbs, vpsum, opj0, opj1, scaling):
             vecpos[0] += vecsum*updatePositionX;
             vecpos[1] += vecsum*updatePositionY;
             pos_idx+=1;
+
+# fast way of calculating meanshift in patch domain
+def getMeanShift(responses, parameters, searchWindow, indXYArray, indXArray, indYArray, scaling, variance):
+    applyWeight = lambda x: math.exp(-0.5*x*scaling/variance)
+    applyWeightFunc = np.vectorize(applyWeight)
+    weightArray = applyWeightFunc(indXYArray)
+    vecProbs = np.multiply(responses, weightArray)
+    vecAvg = 1.0/np.sum(vecProbs, axis=1)
+    vecProbs = np.multiply(vecProbs.T, vecAvg).T
+    xShift = np.dot(vecProbs, indXArray)
+    yShift = np.dot(vecProbs, indYArray)
+    xyShift = np.vstack((xShift, yShift)).T
+    M = np.array([[parameters[0]+1, parameters[1]],
+                  [-parameters[1] , parameters[0]+1]])
+    xyShift = np.dot(xyShift, M)
+    return xyShift
 
 def getConvergence(previousPositions):
     if len(previousPositions) < 10:
