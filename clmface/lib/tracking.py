@@ -187,6 +187,19 @@ def gpopt2(responseWidth, vecpos, vecProbs, vpsum, opj0, opj1, scaling):
             vecpos[1] += vecsum*updatePositionY;
             pos_idx+=1;
 
+# fast way of calculating meanshift in original position domain
+def getMeanShift2(responses, parameters, searchWindow, indXYArray, indXArray, indYArray, scaling, variance):
+    applyWeight = lambda x: math.exp(-0.5*x*scaling/variance)
+    applyWeightFunc = np.vectorize(applyWeight)
+    weightArray = applyWeightFunc(indXYArray)
+    vecProbs = np.multiply(responses, weightArray)
+    vecAvg = 1.0/np.sum(vecProbs, axis=1)
+    vecProbs = np.multiply(vecProbs.T, vecAvg).T
+    xShift = np.dot(vecProbs, indXArray*scaling)
+    yShift = np.dot(vecProbs, indYArray*scaling)
+    xyShift = np.vstack((xShift, yShift)).T
+    return xyShift
+
 # fast way of calculating meanshift in patch domain
 def getMeanShift(responses, parameters, searchWindow, indXYArray, indXArray, indYArray, scaling, variance):
     applyWeight = lambda x: math.exp(-0.5*x*scaling/variance)
