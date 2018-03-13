@@ -13,12 +13,12 @@ import cv2
 import numpy as np
 
 from lib.math_lib import procrustes, logistic, normalize
-from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, gpopt_new, getConvergence, convertPatchVectorToPositionVector, getMeanShift
+from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, gpopt_new, getConvergence, convertPatchVectorToPositionVector, getMeanShift, getMeanShift2
 from lib.image import getImageData
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
 modelDir = os.path.join(fileDir, '../models/')
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 class clmFaceTracker:
     def __init__(self, model_path, debug=False):
@@ -202,6 +202,13 @@ class clmFaceTracker:
                 plt.title('fine-grained face landmarks on the small image')
                 plt.show()
 
+
+            # if update currentParameters with constantVelocity assumption, need to recompute patchPositions
+            if self.config.constantVelocity:
+                self.patchPositions, _ =  calculatePositions2(
+                    self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+                    self.config.xEigenVectors, self.config.yEigenVectors, False)
+
             if self.config.patchType == 'SVM':
                 start = time.time()
                 pw = self.config.patchSize+self.config.searchWindow-1
@@ -236,6 +243,8 @@ class clmFaceTracker:
                     response = response.reshape(self.config.searchWindow*self.config.searchWindow)
 
                     responses.append(response.copy())
+                if self.config.sharpenResponse:
+                    responses = np.power(responses, self.config.sharpenResponse)
                 logging.debug('applying filters takes {} ms'.format((time.time() - start)*1e3))
 
                 originalPositions = deepcopy(self.currentPositions)
@@ -251,17 +260,17 @@ class clmFaceTracker:
                     start = time.time()
 
                     meanShiftVector = np.zeros((self.config.numPatches*2, 1))
-
                     ## AZ: old way of doing meanshift, I consider it wrong (no rotation applied and slow)
+                    ## faster version of this is implemented in getMeanShift2
                     # for j in range(self.config.numPatches):
                     #     opj0 = originalPositions[j][0] - ((self.config.searchWindow-1)*scaling/2)
                     #     opj1 = originalPositions[j][1] - ((self.config.searchWindow-1)*scaling/2)
                     #     vpsum = gpopt(self.config.searchWindow, self.currentPositions[j], self.vecProbs,
-                    #                  responses, opj0, opj1, j, self.config.varianceSeq[i], scaling)
+                    #                   responses, opj0, opj1, j, self.config.varianceSeq[i], scaling)
                     #     gpopt2(self.config.searchWindow, self.vecpos, self.vecProbs, vpsum, opj0, opj1, scaling)
                     #     meanShiftVector[j] = self.vecpos[0] - self.currentPositions[j][0]
                     #     meanShiftVector[j+self.config.numPatches] = self.vecpos[1] - self.currentPositions[j][1]
-                    xyShift = getMeanShift(responses, self.currentParameters,
+                    xyShift = getMeanShift2(responses, self.currentParameters,
                                            self.config.searchWindow, self.config.indXYArray,
                                            self.config.indXArray, self.config.indYArray,
                                            scaling, self.config.varianceSeq[i])
