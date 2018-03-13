@@ -36,7 +36,7 @@ class clmFaceTracker:
     # configure all the non-change variables
     def _config(self):
         config = {
-            'contantVelocity': True,
+            'constantVelocity': True,
             'searchWindow': 11,
             'scoreThreshold': 0.5,
             'stopOnConvergence': False,
@@ -44,6 +44,7 @@ class clmFaceTracker:
             'sharpenResponse': False,
             'convergenceLimit': 0.01,
             'convergenceThreshold': 0.5,
+            'velocityInterpolation': 0.9
         }
         self.config = DotMap(config)
 
@@ -119,6 +120,7 @@ class clmFaceTracker:
         # history of states
         self.previousPositions = deque(maxlen=10)
         self.scoringHistory = deque(maxlen=5)
+        self.previousParameters = deque(maxlen=2)
 
         # check if currently a face is in track
         self.detected_face = False
@@ -145,7 +147,7 @@ class clmFaceTracker:
             self.patchPositions, self.currentPositions = calculatePositions2(self.currentParameters,
                                                                              self.config.meanXShape, self.config.meanYShape,
                                                                              self.config.xEigenVectors, self.config.yEigenVectors, True)
-            print 'initial detection takes {} ms'.format((time.time() - start)*1e3)
+            logging.debug('initial detection takes {} ms'.format((time.time() - start)*1e3))
             if self.debug:
                 logging.debug( 'currentParameters init: {}'.format(self.currentParameters))
                 dst = gray.copy()
@@ -154,17 +156,18 @@ class clmFaceTracker:
                 plt.imshow(dst, cmap='gray')
                 plt.title('fine-grained face landmarks based on initial guess')
                 plt.show()
-            self.refine_tracking(gray, tracking=False)
+            return self.refine_tracking(gray, tracking=False)
         else:
-            self.refine_tracking(gray, tracking=True)
-        return True
+            return self.refine_tracking(gray, tracking=True)
 
     def refine_tracking(self, gray, tracking=False):
         iteration = 0
-        while True:
+        if True:
             iteration += 1
             # AZ: what about rotation == 0
             start = time.time()
+            if self.config.constantVelocity and len(self.previousParameters) >= 2:
+                self.currentParameters = -self.config.velocityInterpolation*self.previousParameters[0]+(1+self.config.velocityInterpolation)*self.previousParameters[1]
             assert self.currentParameters[1] != 0
             rotation = math.pi/2 - math.atan((self.currentParameters[0]+1.0)/self.currentParameters[1])
             if rotation > math.pi/2:
@@ -178,14 +181,14 @@ class clmFaceTracker:
             M[1, 2] -= translateY
             current_gray = cv2.warpAffine(gray, M, (cols, rows))
             # current_gray = cv2.warpAffine(gray, M, (2*cols, 2*rows))
-            print 'rotation/translation takes {} ms'.format((time.time() - start)*1e3)
+            logging.debug('rotation/translation takes {} ms'.format((time.time() - start)*1e3))
             start = time.time()
             # M = np.float32([[1.0, 0, -translateX],
             #                 [0, 1.0, -translateY]])
             # current_gray = cv2.warpAffine(current_gray, M, (cols, rows))
             current_gray = cv2.resize(current_gray, None, 0, 1/scaling, 1/scaling, interpolation=cv2.INTER_NEAREST)
             current_gray = current_gray[0:self.config.sketchH, 0:self.config.sketchW]
-            print 'scale takes {} ms'.format((time.time() - start)*1e3)
+            logging.debug('scale takes {} ms'.format((time.time() - start)*1e3))
 
             if self.debug >= 4 :
                 logging.debug('currentParameters are {}'.format(self.currentParameters))
@@ -213,7 +216,7 @@ class clmFaceTracker:
                     maxv, minv = np.max(patch), np.min(patch)
                     patch = (patch - minv) / 1.0 / (maxv - minv)
                     patches.append(patch)
-                print 'preparing patches takes {} ms'.format((time.time() - start)*1e3)
+                logging.debug('preparing patches takes {} ms'.format((time.time() - start)*1e3))
 
                 # raw filter responses
                 start = time.time()
@@ -233,7 +236,7 @@ class clmFaceTracker:
                     response = response.reshape(self.config.searchWindow*self.config.searchWindow)
 
                     responses.append(response.copy())
-                print 'applying filters takes {} ms'.format((time.time() - start)*1e3)
+                logging.debug('applying filters takes {} ms'.format((time.time() - start)*1e3))
 
                 originalPositions = deepcopy(self.currentPositions)
                 iteration_minor = 0
@@ -244,7 +247,7 @@ class clmFaceTracker:
                     iteration_minor += 1
                     jac = createJacobian2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
                                           self.config.xEigenVectors, self.config.yEigenVectors)
-                    print 'jacobian creation takes {} ms'.format((time.time()-start)*1e3)
+                    logging.debug('jacobian creation takes {} ms'.format((time.time()-start)*1e3))
                     start = time.time()
 
                     meanShiftVector = np.zeros((self.config.numPatches*2, 1))
@@ -264,7 +267,7 @@ class clmFaceTracker:
                                            scaling, self.config.varianceSeq[i])
                     meanShiftVector[0:self.config.numPatches]=xyShift[:, [0]]
                     meanShiftVector[self.config.numPatches:2*self.config.numPatches]=xyShift[:, [1]]
-                    print 'calculating meanshift takes {} ms'.format((time.time() - start)*1e3)
+                    logging.debug('calculating meanshift takes {} ms'.format((time.time() - start)*1e3))
                     start = time.time()
 
                     if self.debug:
@@ -292,7 +295,7 @@ class clmFaceTracker:
                     paramUpdateRight = np.subtract(priorP, jtv)
                     paramUpdate = np.dot(np.linalg.inv(paramUpdateLeft), paramUpdateRight)
                     oldPositions = deepcopy(self.currentPositions)
-                    print 'pdm parameter update takes {} ms'.format((time.time() - start)*1e3)
+                    logging.debug('pdm parameter update takes {} ms'.format((time.time() - start)*1e3))
                     start = time.time()
 
                     # update estimated parameters
@@ -305,12 +308,12 @@ class clmFaceTracker:
                                 self.currentParameters[k+4]=clip
                             else:
                                 self.currentParameters[k+4]=-clip
-                    print 'updating currentParameters takes {} ms'.format((time.time()-start)*1e3)
+                    logging.debug('updating currentParameters takes {} ms'.format((time.time()-start)*1e3))
                     start = time.time()
                     self.patchPositions, self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
                                                                                      self.config.xEigenVectors, self.config.yEigenVectors, True)
-                    print 'updating positions for iteration {}.{} takes {} ms'.format(iteration, iteration_minor,
-                                                                                      (time.time() - start)*1e3)
+                    logging.debug('updating positions for iteration {}.{} takes {} ms'.format(iteration, iteration_minor,
+                                                                                      (time.time() - start)*1e3))
 
                     if self.debug >= 2:
                         dst = gray.copy()
@@ -330,14 +333,14 @@ class clmFaceTracker:
                         break
 
                 self.previousPositions.append(self.currentPositions)
+                if self.config.constantVelocity:
+                    self.previousParameters.append(self.currentParameters)
                 convergenceScore = getConvergence(self.previousPositions)
                 logging.info('iteration {}.{}: convergence score is {}'.format(iteration, iteration_minor, convergenceScore))
                 if convergenceScore < self.config.convergenceThreshold:
                     logging.info('CLM tracker converged: score is {} < {}'.format(convergenceScore, self.config.convergenceLimit))
-                    break
-                if tracking and iteration > 50:
-                    logging.info('CLM tracker exceed iteration limit')
-                    break
+                    return True
+                return False
 
 def main():
     if len(sys.argv) < 2:
@@ -354,7 +357,13 @@ def main():
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     # plt.imshow(gray, cmap='gray')
     # plt.show()
-    tracker.track(gray)
+    iteration = 0
+    while True:
+        converged = tracker.track(gray)
+        iteration += 1
+        if converged:
+            print 'CLMTracker converged after {} iterations'.format(iteration)
+            break
 
     #    tracker.track
 
