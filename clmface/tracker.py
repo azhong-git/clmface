@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from lib.math_lib import procrustes, logistic, normalize
-from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, gpopt_new, getConvergence, convertPatchVectorToPositionVector, getMeanShift, getMeanShift2
+from lib.tracking import getInitialPosition, calculatePositions, calculatePositions2, createJacobian, createJacobian2, gpopt, gpopt2, getConvergence, convertPatchVectorToPositionVector, getMeanShift, getMeanShift2
 from lib.image import getImageData
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
@@ -93,14 +93,24 @@ class clmFaceTracker:
         logistic_func = lambda x: 1.0/(1.0+math.exp(-(x-1)))
         self.config.logistic_func = np.vectorize(logistic_func)
         # faster meanshift
-        self.config.indXArray = np.zeros(self.config.searchWindow*self.config.searchWindow)
-        self.config.indYArray = np.zeros(self.config.searchWindow*self.config.searchWindow)
-        self.config.indXYArray = np.zeros(self.config.searchWindow*self.config.searchWindow)
+        self.config.indXYArray = np.zeros((self.config.searchWindow*self.config.searchWindow, 2))
+        self.config.indNXArray = np.zeros((self.config.numPatches, self.config.searchWindow*self.config.searchWindow))
+        self.config.indNYArray = np.zeros((self.config.numPatches, self.config.searchWindow*self.config.searchWindow))
+        self.config.indX2Y2Array = np.zeros(self.config.searchWindow*self.config.searchWindow)
         for i in range(self.config.searchWindow):
             for j in range(self.config.searchWindow):
-                self.config.indXArray[i*self.config.searchWindow+j] = j-self.config.searchWindow/2
-                self.config.indYArray[i*self.config.searchWindow+j] = i-self.config.searchWindow/2
-                self.config.indXYArray[i*self.config.searchWindow+j] = (i-self.config.searchWindow/2)**2+(j-self.config.searchWindow/2)**2
+                self.config.indXYArray[i*self.config.searchWindow+j, 0] = j-self.config.searchWindow/2
+                self.config.indXYArray[i*self.config.searchWindow+j, 1] = i-self.config.searchWindow/2
+                self.config.indNXArray[:, i*self.config.searchWindow+j] = (j-self.config.searchWindow/2)
+                self.config.indNYArray[:, i*self.config.searchWindow+j] = (i-self.config.searchWindow/2)
+                self.config.indX2Y2Array[i*self.config.searchWindow+j] = (j-self.config.searchWindow/2)**2+(i-self.config.searchWindow/2)**2
+
+
+        # for debug only
+        self.config.debug = False
+        self.config.debugPatches = None
+        self.config.debugCurrentParameters = None
+        self.config.debugCurrentPositions = None
 
     def _initial_state(self):
         self.vecpos = [0.0, 0.0]
@@ -162,6 +172,9 @@ class clmFaceTracker:
 
     def refine_tracking(self, gray, tracking=False):
         iteration = 0
+        if self.config.debug:
+            self.currentParameters = self.config.debugCurrentParameters
+            self.currentPositions = self.config.debugCurrentPositions
         if True:
             iteration += 1
             # AZ: what about rotation == 0
@@ -210,20 +223,25 @@ class clmFaceTracker:
                     self.config.xEigenVectors, self.config.yEigenVectors, False)
 
             if self.config.patchType == 'SVM':
-                start = time.time()
+                responses = []
                 pw = self.config.patchSize+self.config.searchWindow-1
                 pl = self.config.patchSize+self.config.searchWindow-1
-                debug_patches = []
-                patches = []
-                responses = []
-                for i in range(self.config.numPatches):
-                    patch = getImageData(current_gray, self.patchPositions[i][0], self.patchPositions[i][1],
-                                         pw, pl)
-                    # normalize (alternative way, way faster than math_lib.normalize)
-                    maxv, minv = np.max(patch), np.min(patch)
-                    patch = (patch - minv) / 1.0 / (maxv - minv)
-                    patches.append(patch)
-                logging.debug('preparing patches takes {} ms'.format((time.time() - start)*1e3))
+                if self.config.debug:
+                    patches = self.config.debugPatches
+                    for i in range(self.config.numPatches):
+                        maxv, minv = np.max(patches[i]), np.min(patches[i])
+                        patches[i] = (patches[i] - minv) / 1.0 / (maxv - minv)
+                else:
+                    start = time.time()
+                    patches = []
+                    for i in range(self.config.numPatches):
+                        patch = getImageData(current_gray, self.patchPositions[i][0], self.patchPositions[i][1],
+                                             pw, pl)
+                        # normalize (alternative way, way faster than math_lib.normalize)
+                        maxv, minv = np.max(patch), np.min(patch)
+                        patch = (patch - minv) / 1.0 / (maxv - minv)
+                        patches.append(patch)
+                    logging.debug('preparing patches takes {} ms'.format((time.time() - start)*1e3))
 
                 # raw filter responses
                 start = time.time()
@@ -260,6 +278,7 @@ class clmFaceTracker:
                     start = time.time()
 
                     meanShiftVector = np.zeros((self.config.numPatches*2, 1))
+
                     ## AZ: old way of doing meanshift, I consider it wrong (no rotation applied and slow)
                     ## faster version of this is implemented in getMeanShift2
                     # for j in range(self.config.numPatches):
@@ -268,12 +287,19 @@ class clmFaceTracker:
                     #     vpsum = gpopt(self.config.searchWindow, self.currentPositions[j], self.vecProbs,
                     #                   responses, opj0, opj1, j, self.config.varianceSeq[i], scaling)
                     #     gpopt2(self.config.searchWindow, self.vecpos, self.vecProbs, vpsum, opj0, opj1, scaling)
-                    #     meanShiftVector[j] = self.vecpos[0] - self.currentPositions[j][0]
-                    #     meanShiftVector[j+self.config.numPatches] = self.vecpos[1] - self.currentPositions[j][1]
-                    xyShift = getMeanShift2(responses, self.currentParameters,
-                                           self.config.searchWindow, self.config.indXYArray,
-                                           self.config.indXArray, self.config.indYArray,
+                    #     meanShiftVectorOriginal[j] = self.vecpos[0] - self.currentPositions[j][0]
+                    #     meanShiftVectorOriginal[j+self.config.numPatches] = self.vecpos[1] - self.currentPositions[j][1]
+
+                    dxy = originalPositions - self.currentPositions
+                    dx2 = np.power(np.add(self.config.indNXArray*scaling, dxy[:, [0]]), 2)
+                    dy2 = np.power(np.add(self.config.indNYArray*scaling, dxy[:, [1]]), 2)
+                    weightArray = np.exp((dx2+dy2)*(-0.5/self.config.varianceSeq[i]/scaling))
+                    xyShift = getMeanShift2(responses,
+                                           self.config.searchWindow,
+                                           weightArray,
+                                           self.config.indXYArray,
                                            scaling, self.config.varianceSeq[i])
+                    xyShift += dxy
                     meanShiftVector[0:self.config.numPatches]=xyShift[:, [0]]
                     meanShiftVector[self.config.numPatches:2*self.config.numPatches]=xyShift[:, [1]]
                     logging.debug('calculating meanshift takes {} ms'.format((time.time() - start)*1e3))

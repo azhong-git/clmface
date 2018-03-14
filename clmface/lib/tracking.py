@@ -157,22 +157,6 @@ def gpopt(responseWidth, currentPositionsj, vecProbs,
             pos_idx+=1;
     return vpsum;
 
-# calculate meanshift in patch domain, instead of in raw image domain
-def gpopt_new(responseWidth, currentPositionsj, vecProbs,
-              responses, opj0, opj1, j, variance, scaling):
-    pos_idx = 0;
-    vpsum = 0;
-    for k in range(responseWidth):
-        updatePositionY = opj1+(k);
-        for l in range(responseWidth):
-            updatePositionX = opj0+(l);
-            dx = currentPositionsj[0] - updatePositionX
-            dy = currentPositionsj[1] - updatePositionY;
-            vecProbs[pos_idx] = responses[j][pos_idx] * math.exp(-0.5*((dx*dx)+(dy*dy))*scaling/(variance));
-            vpsum += vecProbs[pos_idx];
-            pos_idx+=1;
-    return vpsum;
-
 def gpopt2(responseWidth, vecpos, vecProbs, vpsum, opj0, opj1, scaling):
     pos_idx = 0;
     vecsum = 0;
@@ -188,29 +172,24 @@ def gpopt2(responseWidth, vecpos, vecProbs, vpsum, opj0, opj1, scaling):
             pos_idx+=1;
 
 # fast way of calculating meanshift in original position domain
-def getMeanShift2(responses, parameters, searchWindow, indXYArray, indXArray, indYArray, scaling, variance):
-    applyWeight = lambda x: math.exp(-0.5*x*scaling/variance)
-    applyWeightFunc = np.vectorize(applyWeight)
-    weightArray = applyWeightFunc(indXYArray)
+def getMeanShift2(responses, searchWindow, weightArray, indXYArray, scaling, variance):
+    numPatches = len(responses)
     vecProbs = np.multiply(responses, weightArray)
-    vecAvg = 1.0/np.sum(vecProbs, axis=1)
-    vecProbs = np.multiply(vecProbs.T, vecAvg).T
-    xShift = np.dot(vecProbs, indXArray*scaling)
-    yShift = np.dot(vecProbs, indYArray*scaling)
-    xyShift = np.vstack((xShift, yShift)).T
+    vecAvg = (1.0/np.sum(vecProbs, axis=1)).reshape(numPatches, 1)
+    vecProbs = np.multiply(vecProbs, vecAvg)
+    xyShift = np.dot(vecProbs, indXYArray*scaling)
     return xyShift
 
 # fast way of calculating meanshift in patch domain
-def getMeanShift(responses, parameters, searchWindow, indXYArray, indXArray, indYArray, scaling, variance):
+def getMeanShift(responses, parameters, searchWindow, indX2Y2Array, indXYArray, scaling, variance):
+    numPatches = len(responses)
     applyWeight = lambda x: math.exp(-0.5*x*scaling/variance)
     applyWeightFunc = np.vectorize(applyWeight)
-    weightArray = applyWeightFunc(indXYArray)
+    weightArray = applyWeightFunc(indX2Y2Array)
     vecProbs = np.multiply(responses, weightArray)
-    vecAvg = 1.0/np.sum(vecProbs, axis=1)
-    vecProbs = np.multiply(vecProbs.T, vecAvg).T
-    xShift = np.dot(vecProbs, indXArray)
-    yShift = np.dot(vecProbs, indYArray)
-    xyShift = np.vstack((xShift, yShift)).T
+    vecAvg = (1.0/np.sum(vecProbs, axis=1)).reshape(numPatches, 1)
+    vecProbs = np.multiply(vecProbs, vecAvg)
+    xyShift = np.dot(vecProbs, indXYArray)
     M = np.array([[parameters[0]+1, parameters[1]],
                   [-parameters[1] , parameters[0]+1]])
     xyShift = np.dot(xyShift, M)
