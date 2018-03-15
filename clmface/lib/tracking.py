@@ -220,3 +220,11 @@ def getConvergence(previousPositions):
     msavg = ((diffX*diffX) + (diffY*diffY));
     msavg /= (1.0*len(previousPositions));
     return msavg;
+
+def check_face_score(flattened_img, weights, bias):
+    flattened_img = np.log(flattened_img+1)
+    std = np.std(flattened_img)
+    mean = np.mean(flattened_img)
+    score = np.dot((flattened_img-mean)/std, weights) + bias
+    score = 1.0/(1.0+math.exp(-score))
+    return score
