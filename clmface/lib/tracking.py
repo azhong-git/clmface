@@ -44,8 +44,8 @@ def getInitialPosition(img, model, harrModelDir, debug=False):
                 plt.show()
             procrustes_params = procrustes([left_eye, right_eye, nose],
                                            [model['hints']['leftEye'], model['hints']['rightEye'], model['hints']['nose']])
-            return True, procrustes_params
-    return False, (None, None, None, None)
+            return True, procrustes_params, [left_eye, right_eye, nose]
+    return False, (None, None, None, None), []
 
 # depreciated, use calculatePositions2
 def calculatePositions(parameters, meanShape, eigenVectors, useTransforms):

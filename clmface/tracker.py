@@ -18,7 +18,7 @@ from lib.image import getImageData
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
 modelDir = os.path.join(fileDir, '../models/')
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 class clmFaceTracker:
     def __init__(self, model_path, debug=False):
@@ -38,23 +38,28 @@ class clmFaceTracker:
         weightPoints = [1.0 for i in range(self.model.patchModel.numPatches)]
         eyeIndices = [23,24,25,26,27,28,29,30,31,32,63,64,65,66,67,68,69,70]
         mouthIndices = [44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61]
+        mouthOpenIndices = [59, 60, 61, 56, 57, 58, 52, 53, 54]
+        mouthOpenIndices2 = [59, 60, 61, 56, 57, 58]
         jawIndices = [4,5,6,7,8,9,10]
         for i in eyeIndices:
             weightPoints[i] = 1.0
         for i in mouthIndices:
             weightPoints[i] = 1.0
+        for i in mouthOpenIndices2:
+            weightPoints[i] = 0.2
         for i in jawIndices:
-            weightPoints[i] = 0.5
+            weightPoints[i] = 1.0
         config = {
             'constantVelocity': True,
             'searchWindow': 11,
             'scoreThreshold': 0.5,
             'stopOnConvergence': False,
-            'weightPoints': None,
+            'weightPoints': weightPoints,
             'sharpenResponse': False,
             'convergenceLimit': 0.01,
             'convergenceThreshold': 0.5,
-            'velocityInterpolation': 0.9
+            'velocityInterpolation': 0.9,
+            'localTracking': True
         }
         self.config = DotMap(config)
 
@@ -133,6 +138,7 @@ class clmFaceTracker:
             pointWeight.extend(pointWeight)
             self.config.pointWeight = np.diag(pointWeight)
 
+        self.config.trackWindow = 20 # track a 20 pixel window for local tracker
 
         # for debug only
         self.config.debug = False
@@ -160,9 +166,28 @@ class clmFaceTracker:
         self.scoringHistory = deque(maxlen=5)
         self.previousParameters = deque(maxlen=2)
 
+        # tracking
+        if self.config.localTracking:
+            self.localTracker = cv2.MultiTracker_create()
+            self.lastFrameLocallyTracked = False
+            self.localTrackerUpdate = None
+
         # check if currently a face is in track
         self.detected_face = False
+        self.max_face_score = 0
+        self.iteration = 0
         return
+
+    def resetParameters(self):
+        self.detected_face = False
+        self.max_face_score = 0
+        self.currentParameters = np.zeros(self.config.numParameters+4)
+        # in full-size coordinates
+        self.currentPositions = None
+        self.previousPositions = deque(maxlen=10)
+        self.scoringHistory = deque(maxlen=5)
+        self.previousParameters = deque(maxlen=2)
+        self.iteration = 0
 
     def track(self, gray):
         shape = gray.shape
@@ -171,7 +196,7 @@ class clmFaceTracker:
             start = time.time()
             # useful if the grayscale image contains floating point numbers
             gray_truncated = np.asarray(gray, dtype=np.uint8)
-            self.detected_face, (translateX, translateY, scaling, rotation) = getInitialPosition(
+            self.detected_face, (translateX, translateY, scaling, rotation), trackPoints = getInitialPosition(
                 gray_truncated, self.model,
                 modelDir, debug=self.debug)
             if not self.detected_face:
@@ -186,6 +211,15 @@ class clmFaceTracker:
                                                                              self.config.meanXShape, self.config.meanYShape,
                                                                              self.config.xEigenVectors, self.config.yEigenVectors, True)
             logging.debug('initial detection takes {:.2f} ms'.format((time.time() - start)*1e3))
+
+            if self.config.localTracking:
+                self.localTracker = cv2.MultiTracker_create()
+                self.localTrackerRects = []
+                for [x, y] in trackPoints:
+                    rect = (int(x)-self.config.trackWindow/2, int(y)-self.config.trackWindow/2,
+                            self.config.trackWindow, self.config.trackWindow)
+                    ok = self.localTracker.add(cv2.TrackerMedianFlow_create(), gray, rect)
+
             if self.debug:
                 logging.debug( 'currentParameters init: {}'.format(self.currentParameters))
                 dst = gray.copy()
@@ -194,9 +228,9 @@ class clmFaceTracker:
                 plt.imshow(dst, cmap='gray')
                 plt.title('fine-grained face landmarks based on initial guess')
                 plt.show()
-            return self.refine_tracking(gray, tracking=False)
+            return self.refine_tracking(gray, initTracking=True)
         else:
-            return self.refine_tracking(gray, tracking=True)
+            return self.refine_tracking(gray, initTracking=False)
 
     def start_timer(self):
         self.time_last = time.time()
@@ -211,16 +245,51 @@ class clmFaceTracker:
         self.time_last = time.time()
 
 
-    def refine_tracking(self, gray, tracking=False):
-        iteration = 0
+    def refine_tracking(self, gray, initTracking=False):
         if self.config.debug:
             self.currentParameters = self.config.debugCurrentParameters
             self.currentPositions = self.config.debugCurrentPositions
 
         self.start_timer()
-        iteration += 1
+        self.iteration += 1
+        if self.config.localTracking:
+            lastFrameLocallyTracked = self.lastFrameLocallyTracked
+            ok, rects = self.localTracker.update(gray)
+            if ok:
+                self.localTrackerRects = rects
+                assert len(self.localTrackerRects) == 3, 'all features need to be tracked'
+                if lastFrameLocallyTracked:
+                    lastTrackerRectCenters = self.localTrackerRectCenters
+                    self.localTrackerRectCenters = ([[x+w/2, y+h/2] for x,y,w,h in rects])
+                    translateX, translateY, scaling, rotation = procrustes(self.localTrackerRectCenters,
+                                                                           lastTrackerRectCenters)
+                    self.localTrackerUpdate = [translateX, translateY, scaling, rotation]
+                    M = np.array([[self.currentParameters[0]+1, -self.currentParameters[1], self.currentParameters[2]],
+                                  [self.currentParameters[1] , self.currentParameters[0]+1, self.currentParameters[3]],
+                                  [0.0, 0.0, 1]])
+                    Mupdate = np.array([[scaling*math.cos(rotation), -scaling*math.sin(rotation), translateX],
+                                        [scaling*math.sin(rotation), scaling*math.cos(rotation), translateY],
+                                        [0.0, 0.0, 1.0]])
+                    M = np.dot(Mupdate, M)
+                    self.currentParameters[0] = M[0][0] - 1
+                    self.currentParameters[1] = M[1][0]
+                    self.currentParameters[2] = M[0][2]
+                    self.currentParameters[3] = M[1][2]
+                else:
+                    self.localTrackerRectCenters = ([[x+w/2, y+h/2] for x,y,w,h in rects])
+                    self.localTrackerUpdate = None
+
+                self.lastFrameLocallyTracked = True
+            else:
+                self.lastFrameLocallyTracked = False
+                self.localTrackerUpdate = None
+            self.update_timer('localTracking')
+
         if self.config.constantVelocity and len(self.previousParameters) >= 2:
-            self.currentParameters = -self.config.velocityInterpolation*self.previousParameters[0]+(1+self.config.velocityInterpolation)*self.previousParameters[1]
+            if self.config.localTracking and lastFrameLocallyTracked:
+                self.currentParameters[4:] = -self.config.velocityInterpolation*self.previousParameters[0][4:]+(1+self.config.velocityInterpolation)*self.previousParameters[1][4:]
+            else:
+                self.currentParameters = -self.config.velocityInterpolation*self.previousParameters[0]+(1+self.config.velocityInterpolation)*self.previousParameters[1]
 
         # AZ: what about rotation == 0
         assert self.currentParameters[1] != 0
@@ -230,6 +299,10 @@ class clmFaceTracker:
         scaling = self.currentParameters[1]/math.sin(rotation)
         translateX = self.currentParameters[2]
         translateY = self.currentParameters[3]
+        if scaling < 0.5:
+            self.resetParameters()
+            logging.info('face is too small, reinitialize')
+            return False, 0
         rows, cols = gray.shape
         M = cv2.getRotationMatrix2D((translateX, translateY), rotation/math.pi*180, 1)
         M[0, 2] -= translateX
@@ -250,7 +323,14 @@ class clmFaceTracker:
                                             self.config.score_start_x: self.config.score_end_x]
         current_gray_scoring = cv2.resize(current_gray_scoring, (self.config.score_patch_width, self.config.score_patch_height)).reshape(self.config.score_patch_width*self.config.score_patch_height)
         face_score = check_face_score(current_gray_scoring, self.config.scoringWeights, self.config.scoringBias)
+        self.scoringHistory.append(face_score)
+        if face_score > self.max_face_score:
+            self.max_face_score = face_score
         self.update_timer('face scoring')
+        mean_score = np.mean(self.scoringHistory)
+        if mean_score < self.max_face_score*0.4 or mean_score < 0.2 or (self.iteration > 5 and self.max_face_score < 0.5):
+            self.resetParameters()
+            return False, 0
 
         # if update currentParameters with constantVelocity assumption, need to recompute patchPositions
         if self.config.constantVelocity:
@@ -291,7 +371,10 @@ class clmFaceTracker:
                                          pw, pl)
                     # normalize (alternative way, way faster than math_lib.normalize)
                     maxv, minv = np.max(patch), np.min(patch)
-                    patch = (patch - minv) / 1.0 / (maxv - minv)
+                    if maxv - minv < 1e-10:
+                        patch = patch - minv
+                    else:
+                        patch = (patch - minv) / 1.0 / (maxv - minv)
                     patches.append(patch)
                 self.update_timer('preparing patches')
             # raw filter responses
@@ -362,7 +445,7 @@ class clmFaceTracker:
                         cv2.circle(dst, (int(x), int(y)), 2, (255, 0, 0))
                         cv2.line(dst, (int(x),int(y)), (int(x_new), int(y_new)), (255, 255, 255), 2)
                     plt.imshow(dst, cmap='gray')
-                    plt.title('meanshift iteration {}.{}'.format(iteration, iteration_minor))
+                    plt.title('meanshift iteration {}'.format(iteration_minor))
                     plt.show()
 
                 # compute pdm paramter update
@@ -412,7 +495,7 @@ class clmFaceTracker:
 
                 start = time.time()
                 positionNorm = np.sum(np.power(self.currentPositions - oldPositions, 2))
-                logging.info('iteration {}.{}: position norm is {}, limit is {}'.format(iteration, iteration_minor, positionNorm, self.config.convergenceLimit))
+                logging.debug('iteration {}: position norm is {}, limit is {}'.format(iteration_minor, positionNorm, self.config.convergenceLimit))
                 self.update_timer('calculating positionNorm')
                 if positionNorm < self.config.convergenceLimit:
                     break
@@ -420,12 +503,12 @@ class clmFaceTracker:
             self.previousPositions.append(self.currentPositions)
             if self.config.constantVelocity:
                 self.previousParameters.append(self.currentParameters)
-            convergenceScore = getConvergence(self.previousPositions)
-            logging.info('iteration {}.{}: convergence score is {}'.format(iteration, iteration_minor, convergenceScore))
-            if convergenceScore < self.config.convergenceThreshold:
-                logging.info('CLM tracker converged: score is {} < {}'.format(convergenceScore, self.config.convergenceLimit))
-                return True, face_score
-            return False, face_score
+            # convergenceScore = getConvergence(self.previousPositions)
+            # logging.debug('iteration {}: convergence score is {}'.format(iteration_minor, convergenceScore))
+            # if convergenceScore < self.config.convergenceThreshold:
+            #     logging.debug('CLM tracker converged: score is {} < {}'.format(convergenceScore, self.config.convergenceLimit))
+            #     return True, face_score
+            return True, face_score
 
 def main():
     if len(sys.argv) < 2:
