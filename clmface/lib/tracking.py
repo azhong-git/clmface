@@ -20,31 +20,32 @@ def getInitialPosition(img, model, harrModelDir, debug=False):
         (fx, fy, fw, fh) = faces[0]
         face_crop = img[fy:fy+fh,fx:fx+fw]
         eyes = eye_cascade.detectMultiScale(face_crop)
-        noses = nose_cascade.detectMultiScale(face_crop, minNeighbors=6)
-        if len(eyes) == 2 and len(noses) == 1:
-            if eyes[0][0] < eyes[1][0]:
-                left_eye_rect = eyes[0]
-                right_eye_rect = eyes[1]
-            else:
-                left_eye_rect = eyes[1]
-                right_eye_rect = eyes[0]
-            left_eye = [left_eye_rect[0] + left_eye_rect[2]/2.0 + fx, left_eye_rect[1] + left_eye_rect[3]/2.0 + fy]
-            right_eye = [right_eye_rect[0] + right_eye_rect[2]/2.0 + fx, right_eye_rect[1] + right_eye_rect[3]/2.0 + fy]
-            nose = [noses[0][0] + noses[0][2]/2.0 + fx, noses[0][1] + noses[0][3]/2.0 + fy]
+        if len(eyes) == 2:
+            noses = nose_cascade.detectMultiScale(face_crop, minNeighbors=6)
+            if len(noses) == 1:
+                if eyes[0][0] < eyes[1][0]:
+                    left_eye_rect = eyes[0]
+                    right_eye_rect = eyes[1]
+                else:
+                    left_eye_rect = eyes[1]
+                    right_eye_rect = eyes[0]
+                left_eye = [left_eye_rect[0] + left_eye_rect[2]/2.0 + fx, left_eye_rect[1] + left_eye_rect[3]/2.0 + fy]
+                right_eye = [right_eye_rect[0] + right_eye_rect[2]/2.0 + fx, right_eye_rect[1] + right_eye_rect[3]/2.0 + fy]
+                nose = [noses[0][0] + noses[0][2]/2.0 + fx, noses[0][1] + noses[0][3]/2.0 + fy]
 
-            if debug:
-                import matplotlib.pyplot as plt
-                dst = img.copy()
-                cv2.rectangle(dst, (fx, fy), (fx+fw, fy+fh), (255),2)
-                cv2.circle(dst, (int(left_eye[0]), int(left_eye[1])), 5, (255))
-                cv2.circle(dst, (int(right_eye[0]), int(right_eye[1])), 5, (255))
-                cv2.circle(dst, (int(nose[0]), int(nose[1])), 5, (255))
-                plt.imshow(dst, cmap='gray')
-                plt.title('intial frontal face guess')
-                plt.show()
-            procrustes_params = procrustes([left_eye, right_eye, nose],
-                                           [model['hints']['leftEye'], model['hints']['rightEye'], model['hints']['nose']])
-            return True, procrustes_params, [left_eye, right_eye, nose]
+                if debug:
+                    import matplotlib.pyplot as plt
+                    dst = img.copy()
+                    cv2.rectangle(dst, (fx, fy), (fx+fw, fy+fh), (255),2)
+                    cv2.circle(dst, (int(left_eye[0]), int(left_eye[1])), 5, (255))
+                    cv2.circle(dst, (int(right_eye[0]), int(right_eye[1])), 5, (255))
+                    cv2.circle(dst, (int(nose[0]), int(nose[1])), 5, (255))
+                    plt.imshow(dst, cmap='gray')
+                    plt.title('intial frontal face guess')
+                    plt.show()
+                procrustes_params = procrustes([left_eye, right_eye, nose],
+                                               [model['hints']['leftEye'], model['hints']['rightEye'], model['hints']['nose']])
+                return True, procrustes_params, [left_eye, right_eye, nose]
     return False, (None, None, None, None), []
 
 # depreciated, use calculatePositions2
