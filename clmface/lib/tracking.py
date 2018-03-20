@@ -8,11 +8,8 @@ from math_lib import procrustes
 # instead of using np.round, vectorize round below
 np_round = np.vectorize(round)
 
-def getInitialPosition(img, model, harrModelDir, debug=False):
+def getInitialPosition(img, model, face_cascade, eye_cascade, nose_cascade, debug=False):
     # first get an initial guess of where the face is
-    face_cascade = cv2.CascadeClassifier(os.path.join(harrModelDir, 'frontal_face.xml'))
-    eye_cascade = cv2.CascadeClassifier(os.path.join(harrModelDir, 'eye.xml'))
-    nose_cascade = cv2.CascadeClassifier(os.path.join(harrModelDir, 'nose.xml'))
     faces = face_cascade.detectMultiScale(img)
     detected = False
     # has to find one face to start with

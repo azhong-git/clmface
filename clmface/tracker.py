@@ -139,6 +139,9 @@ class clmFaceTracker:
             self.config.pointWeight = np.diag(pointWeight)
 
         self.config.trackWindow = 20 # track a 20 pixel window for local tracker
+        self.config.face_cascade = cv2.CascadeClassifier(os.path.join(modelDir, 'frontal_face.xml'))
+        self.config.eye_cascade = cv2.CascadeClassifier(os.path.join(modelDir, 'eye.xml'))
+        self.config.nose_cascade = cv2.CascadeClassifier(os.path.join(modelDir, 'nose.xml'))
 
         # for debug only
         self.config.debug = False
@@ -198,7 +201,7 @@ class clmFaceTracker:
             gray_truncated = np.asarray(gray, dtype=np.uint8)
             self.detected_face, (translateX, translateY, scaling, rotation), trackPoints = getInitialPosition(
                 gray_truncated, self.model,
-                modelDir, debug=self.debug)
+                self.config.face_cascade, self.config.eye_cascade, self.config.nose_cascade, debug=self.debug)
             if not self.detected_face:
                 return False, 0
             # AZ: tuning why -1?
