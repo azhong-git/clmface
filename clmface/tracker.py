@@ -532,9 +532,9 @@ def main():
     while True:
         converged, score = tracker.track(gray)
         iteration += 1
-        print 'CLMTracker iteration {}: score: {}'.format(iteration, score)
+        print('CLMTracker iteration {}: score: {}'.format(iteration, score))
         if converged:
-            print 'CLMTracker converged after {} iterations'.format(iteration)
+            print('CLMTracker converged after {} iterations'.format(iteration))
             break
 
     #    tracker.track

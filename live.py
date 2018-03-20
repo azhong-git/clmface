@@ -78,6 +78,6 @@ if __name__ == '__main__':
 
 
         latency_in_ms = (time.time() - start_time) * 1e3
-        print 'one frame takes {} ms'.format(latency_in_ms)
+        print('one frame takes {} ms'.format(latency_in_ms))
 
         response_queue.put({'img': img}, timeout=1.0)
