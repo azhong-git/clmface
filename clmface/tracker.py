@@ -150,8 +150,8 @@ class clmFaceTracker:
         self.config.debugCurrentPositions = None
 
     def _initial_state(self):
-        self.vecpos = [0.0, 0.0]
-        self.vecProbs = np.zeros(self.config.searchWindow * self.config.searchWindow)
+        # self.vecpos = [0.0, 0.0]
+        # self.vecProbs = np.zeros(self.config.searchWindow * self.config.searchWindow)
         self.gaussianPD = np.zeros((self.config.numParameters+4, self.config.numParameters+4))
         for i in range(self.config.numParameters):
             if i in self.model.shapeModel.nonRegularizedVectors:
@@ -210,9 +210,6 @@ class clmFaceTracker:
             self.currentParameters[2] = translateX
             self.currentParameters[3] = translateY
 
-            self.patchPositions, self.currentPositions = calculatePositions2(self.currentParameters,
-                                                                             self.config.meanXShape, self.config.meanYShape,
-                                                                             self.config.xEigenVectors, self.config.yEigenVectors, True)
             logging.debug('initial detection takes {:.2f} ms'.format((time.time() - start)*1e3))
 
             if self.config.localTracking:
@@ -223,14 +220,6 @@ class clmFaceTracker:
                             self.config.trackWindow, self.config.trackWindow)
                     ok = self.localTracker.add(cv2.TrackerMedianFlow_create(), gray, rect)
 
-            if self.debug:
-                logging.debug( 'currentParameters init: {}'.format(self.currentParameters))
-                dst = gray.copy()
-                for x, y in self.currentPositions:
-                    cv2.circle(dst, (int(x), int(y)), 2, (255))
-                plt.imshow(dst, cmap='gray')
-                plt.title('fine-grained face landmarks based on initial guess')
-                plt.show()
             return self.refine_tracking(gray, initTracking=True)
         else:
             return self.refine_tracking(gray, initTracking=False)
@@ -289,7 +278,7 @@ class clmFaceTracker:
             self.update_timer('localTracking')
 
         if self.config.constantVelocity and len(self.previousParameters) >= 2:
-            if self.config.localTracking and lastFrameLocallyTracked:
+            if self.config.localTracking and lastFrameLocallyTracked and self.lastFrameLocallyTracked:
                 self.currentParameters[4:] = -self.config.velocityInterpolation*self.previousParameters[0][4:]+(1+self.config.velocityInterpolation)*self.previousParameters[1][4:]
             else:
                 self.currentParameters = -self.config.velocityInterpolation*self.previousParameters[0]+(1+self.config.velocityInterpolation)*self.previousParameters[1]
@@ -336,11 +325,21 @@ class clmFaceTracker:
             return False, 0
 
         # if update currentParameters with constantVelocity assumption, need to recompute patchPositions
-        if self.config.constantVelocity:
-            self.patchPositions, _ =  calculatePositions2(
-                self.currentParameters, self.config.meanXShape, self.config.meanYShape,
-                self.config.xEigenVectors, self.config.yEigenVectors, False)
-            self.update_timer('updating patchPositions because of constVelocity')
+        self.patchPositions, self.currentPositions =  calculatePositions2(
+            self.currentParameters, self.config.meanXShape, self.config.meanYShape,
+            self.config.xEigenVectors, self.config.yEigenVectors, True)
+        self.update_timer('updating patchPositions and currentPositions')
+
+        if self.debug:
+            logging.debug( 'currentParameters init: {}'.format(self.currentParameters))
+            dst = gray.copy()
+            for x, y in self.currentPositions:
+                cv2.circle(dst, (int(x), int(y)), 2, (255))
+            plt.imshow(dst, cmap='gray')
+            plt.title('fine-grained face landmarks based on initial guess')
+            plt.show()
+
+
 
         if self.debug >= 4 :
             logging.debug('currentParameters are {}'.format(self.currentParameters))
