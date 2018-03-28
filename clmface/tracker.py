@@ -339,8 +339,6 @@ class clmFaceTracker:
             plt.title('fine-grained face landmarks based on initial guess')
             plt.show()
 
-
-
         if self.debug >= 4 :
             logging.debug('currentParameters are {}'.format(self.currentParameters))
             plt.imshow(current_gray, cmap='gray')
@@ -482,7 +480,6 @@ class clmFaceTracker:
                             self.currentParameters[k+4]=-clip
                 self.update_timer('updating currentParameters')
 
-                start = time.time()
                 self.patchPositions, self.currentPositions = calculatePositions2(self.currentParameters, self.config.meanXShape, self.config.meanYShape,
                                                                                  self.config.xEigenVectors, self.config.yEigenVectors, True)
                 self.update_timer('updating positions')
